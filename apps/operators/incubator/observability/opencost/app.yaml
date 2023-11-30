@@ -1,0 +1,266 @@
+apiVersion: argoproj.io/v1alpha1
+kind: Application
+metadata:
+  name: "opencost"
+  namespace: argocd
+  labels:
+    name: "opencost"
+  annotations:
+    argocd.argoproj.io/sync-wave: "-51"
+spec:
+  # Destination
+  destination:
+    namespace: observability-system
+
+  # Reference: https://artifacthub.io/packages/helm/cert-manager/cert-manager
+  source:
+    repoURL: https://opencost.github.io/opencost-helm-chart # Can point to either a Helm chart repo or a git repo.
+    targetRevision: 1.20.3
+    chart: opencost
+    helm:
+      parameters: []
+      values: |
+        serviceAccount:
+          # -- Specifies whether a service account should be created
+          create: true
+          # -- Whether pods running as this service account should have an API token automatically mounted
+          automountServiceAccountToken: true
+
+        # NetworkPolicies for ingress
+        networkPolicies:
+          # -- Specifies whether networkpolicies should be created
+          enabled: false
+
+          # -- Internal Prometheus settings related to NetworkPolicies
+          prometheus:
+            # -- Namespace where internal Prometheus is installed
+            namespace: prometheus-system
+            # -- Pod port of in-cluster Prometheus
+            port: 9090
+            # -- Labels applied to the Prometheus server pod(s)
+            labels:
+              app.kubernetes.io/name: prometheus
+
+        # --  Strategy to be used for the Deployment
+        updateStrategy:
+          rollingUpdate:
+            maxSurge: 1
+            maxUnavailable: 1
+          type: RollingUpdate
+        # --  Annotations to add to the all the resources
+        annotations: {}
+        # --  Annotations to add to the OpenCost Pod
+        podAnnotations: {}
+        # --  Annotations to add to the Secret
+        secretAnnotations: {}
+        # --  Labels to add to the OpenCost Pod
+        podLabels: {}
+        # --  Pod priority
+        priorityClassName: ~
+
+        # -- Holds pod-level security attributes and common container settings
+        podSecurityContext: {}
+          # fsGroup: 2000
+
+        service:
+          enabled: true
+
+        # Create cluster role policies
+        rbac:
+          enabled: true
+
+        opencost:
+          exporter:
+            # -- The GCP Pricing API requires a key. This is supplied just for evaluation.
+            cloudProviderApiKey: ""
+            # -- Default cluster ID to use if cluster_id is not set in Prometheus metrics.
+            defaultClusterId: 'default-cluster'
+            image:
+              # -- Exporter container image registry
+              registry: quay.io
+              # -- Exporter container image name
+              repository: kubecost1/kubecost-cost-model
+              # -- Exporter container image tag
+              # @default -- `""` (use appVersion in Chart.yaml)
+              tag: "latest"
+              # -- Exporter container image pull policy
+              pullPolicy: IfNotPresent
+              # -- Override the full image name for development purposes
+              fullImageName: null
+            # -- List of extra arguments for the command, e.g.: log-format=json
+            extraArgs: []
+            # -- Number of OpenCost replicas to run
+            replicas: 1
+            resources:
+              # -- CPU/Memory resource requests
+              requests:
+                cpu: '10m'
+                memory: '55Mi'
+              # -- CPU/Memory resource limits
+              limits:
+                cpu: '999m'
+                memory: '1Gi'
+            # Liveness probe configuration
+            livenessProbe:
+              # -- Whether probe is enabled
+              enabled: true
+              # -- Number of seconds before probe is initiated
+              initialDelaySeconds: 120
+              # -- Probe frequency in seconds
+              periodSeconds: 10
+              # -- Number of failures for probe to be considered failed
+              failureThreshold: 3
+            # Readiness probe configuration
+            readinessProbe:
+              # -- Whether probe is enabled
+              enabled: true
+              # -- Number of seconds before probe is initiated
+              initialDelaySeconds: 120
+              # -- Probe frequency in seconds
+              periodSeconds: 10
+              # -- Number of failures for probe to be considered failed
+              failureThreshold: 3
+            # -- The security options the container should be run with
+            securityContext: {}
+              # capabilities:
+              #   drop:
+              #   - ALL
+              # readOnlyRootFilesystem: true
+              # runAsNonRoot: true
+              # runAsUser: 1000
+
+            # Path of CSV file
+            csv_path: ""
+
+          customPricing:
+            # -- Enables custom pricing configuration
+            enabled: false
+            # -- Customize the configmap name used for custom pricing
+            configmapName: custom-pricing-model
+            # -- Path for the pricing configuration.
+            configPath: /tmp/custom-config
+            # -- Configures the pricing model provided in the values file.
+            createConfigmap: true
+            # -- Sets the provider type for the custom pricing file.
+            provider: custom
+            # -- More information about these values here: https://www.opencost.io/docs/configuration/on-prem#custom-pricing-using-the-opencost-helm-chart
+            costModel:
+              description: Modified pricing configuration.
+              CPU: 1.25
+              spotCPU: 0.006655
+              RAM: 0.50
+              spotRAM: 0.000892
+              GPU: 0.95
+              storage: 0.25
+              zoneNetworkEgress: 0.01
+              regionNetworkEgress: 0.01
+              internetNetworkEgress: 0.12
+
+          dataRetention:
+            dailyResolutionDays: 15
+
+          metrics:
+            serviceMonitor:
+              # -- Create ServiceMonitor resource for scraping metrics using PrometheusOperator
+              enabled: false
+              # -- Additional labels to add to the ServiceMonitor
+              additionalLabels: {}
+              # -- Specify if the ServiceMonitor will be deployed into a different namespace (blank deploys into same namespace as chart)
+              namespace: ""
+              # -- Interval at which metrics should be scraped
+              scrapeInterval: 30s
+              # -- Timeout after which the scrape is ended
+              scrapeTimeout: 10s
+              # -- HonorLabels chooses the metric's labels on collisions with target labels
+              honorLabels: true
+              # -- RelabelConfigs to apply to samples before scraping. Prometheus Operator automatically adds relabelings for a few standard Kubernetes fields
+              relabelings: []
+              # -- MetricRelabelConfigs to apply to samples before ingestion
+              metricRelabelings: []
+              # -- extra Endpoints to add to the ServiceMonitor.  Useful for scraping sidecars
+              extraEndpoints: []
+                # - port: oauth-metrics
+                #   path: /metrics
+              # -- HTTP scheme used for scraping. Defaults to `http`
+              scheme: http
+              # -- TLS configuration for scraping metrics
+              tlsConfig: {}
+                # caFile: /etc/prom-certs/root-cert.pem
+                # certFile: /etc/prom-certs/cert-chain.pem
+                # insecureSkipVerify: true
+                # keyFile: /etc/prom-certs/key.pem
+
+          prometheus:
+            # -- Secret name that contains credentials for Prometheus
+            secret_name: ~
+            # -- Prometheus Basic auth username
+            username: ""
+            # -- Key in the secret that references the username
+            username_key: DB_BASIC_AUTH_USERNAME
+            # -- Prometheus Basic auth password
+            password: ""
+            # -- Key in the secret that references the password
+            password_key: DB_BASIC_AUTH_PW
+            # -- Prometheus Bearer token
+            bearer_token: ""
+            bearer_token_key: DB_BEARER_TOKEN
+            external:
+              # -- Use external Prometheus (eg. Grafana Cloud)
+              enabled: false
+              # -- External Prometheus url
+              url: "https://prometheus.example.com/prometheus"
+            internal:
+              # -- Use in-cluster Prometheus
+              enabled: true
+              # -- Service name of in-cluster Prometheus
+              serviceName: prometheus-server
+              # -- Namespace of in-cluster Prometheus
+              namespaceName: prometheus-system
+              # -- Service port of in-cluster Prometheus
+              port: 80
+            amp:
+              # -- Use Amazon Managed Service for Prometheus (AMP)
+              enabled: false  # If true, opencost will be configured to remote_write and query from Amazon Managed Service for Prometheus.
+              # -- Workspace ID for AMP
+              workspaceId: ""
+            thanos:
+              enabled: false
+              queryOffset: ''
+              maxSourceResolution: ''
+              internal:
+                enabled: true
+                serviceName: my-thanos-query
+                namespaceName: opencost
+                port: 10901
+              external:
+                enabled: false
+                url: 'https://thanos-query.example.com/thanos'
+
+          ui:
+            # -- Enable OpenCost UI
+            enabled: false
+
+            extraEnv: []
+
+            ingress:
+              # -- Ingress for OpenCost UI
+              enabled: false
+              # -- Ingress controller which implements the resource
+              ingressClassName: ""
+              # -- Annotations for Ingress resource
+              annotations: {}
+                # kubernetes.io/tls-acme: "true"
+              # -- A list of host rules used to configure the Ingress
+              # @default -- See [values.yaml](values.yaml)
+              hosts:
+                - host: example.local
+                  paths:
+                    - /
+              # -- Redirect ingress to an extraPort defined on the service such as oauth-proxy
+              servicePort: http-ui
+              # servicePort: oauth-proxy
+              # -- Ingress TLS configuration
+              tls: []
+                #  - secretName: chart-example-tls
+                #    hosts:
+                #      - chart-example.local
